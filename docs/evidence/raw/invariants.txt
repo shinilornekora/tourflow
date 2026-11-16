@@ -1,0 +1,96 @@
+# Инварианты после всех опытов (база booking стенда, роль-владелец, 16.11.2026). Запрос и результат.
+SELECT set_config('app.role', 'system', false) AS context;
+ context 
+---------
+ system
+(1 row)
+
+-- объём
+SELECT (SELECT count(*) FROM reservations) AS reservations,
+       (SELECT count(*) FROM reservations WHERE status = 'confirmed') AS confirmed,
+       (SELECT count(*) FROM inventory) AS inventory_rows,
+       (SELECT count(*) FROM idempotency_keys) AS idempotency_keys,
+       (SELECT count(*) FROM audit_log) AS audit_records;
+ reservations | confirmed | inventory_rows | idempotency_keys | audit_records 
+--------------+-----------+----------------+------------------+---------------
+       247810 |    247810 |           6800 |           150230 |        150230
+(1 row)
+
+-- 1. остаток не отрицательный (схема: CHECK booked >= 0)
+SELECT count(*) AS violations FROM inventory WHERE booked < 0;
+ violations 
+------------
+          0
+(1 row)
+
+-- 2. продано не больше, чем номеров в категории (транзакция: блокировка строк остатков)
+SELECT count(*) AS violations FROM inventory i JOIN room_type_replica r USING (room_type_id) WHERE i.booked > r.total_rooms;
+ violations 
+------------
+          0
+(1 row)
+
+-- 3. остатки равны числу подтверждённых броней на каждые сутки (фоновая сверка)
+WITH actual AS (
+  SELECT r.room_type_id, d::date AS day, count(*)::int AS confirmed
+  FROM reservations r, generate_series(r.check_in, r.check_out - 1, interval '1 day') d
+  WHERE r.status = 'confirmed' GROUP BY 1, 2)
+SELECT count(*) AS violations FROM inventory i FULL JOIN actual a ON a.room_type_id = i.room_type_id AND a.day = i.day
+WHERE coalesce(i.booked, 0) <> coalesce(a.confirmed, 0);
+ violations 
+------------
+          0
+(1 row)
+
+-- 4. один ключ идемпотентности — одна бронь, и эта бронь существует
+SELECT (SELECT count(*) FROM (SELECT reservation_id FROM idempotency_keys GROUP BY 1 HAVING count(*) > 1) x) AS duplicate_keys,
+       (SELECT count(*) FROM idempotency_keys k LEFT JOIN reservations r ON r.id = k.reservation_id WHERE r.id IS NULL) AS keys_without_reservation;
+ duplicate_keys | keys_without_reservation 
+----------------+--------------------------
+              0 |                        0
+(1 row)
+
+-- 5. у каждого ключа есть сохранённый ответ и запись аудита о создании
+SELECT count(*) AS violations FROM idempotency_keys k
+  LEFT JOIN audit_log a ON a.entity_id = k.reservation_id AND a.action = 'reservation.created'
+  WHERE k.response IS NULL OR a.id IS NULL;
+ violations 
+------------
+          0
+(1 row)
+
+-- 5а. обратная сторона: у каждой записи аудита о брони есть бронь (журнал не ссылается на удалённое)
+SELECT count(*) AS violations FROM audit_log a LEFT JOIN reservations r ON r.id = a.entity_id
+  WHERE a.action LIKE 'reservation.%' AND r.id IS NULL;
+ violations 
+------------
+          0
+(1 row)
+
+-- 5б. каждая бронь, созданная через сервис (а не заливкой fill.sql, 97 580 строк), имеет ключ
+SELECT (SELECT count(*) FROM reservations) - 97580 AS created_by_service, (SELECT count(*) FROM idempotency_keys) AS keys;
+ created_by_service |  keys  
+--------------------+--------
+             150230 | 150230
+(1 row)
+
+-- 6. события outbox (контекст ретранслятора): всего и не опубликовано
+SELECT set_config('app.relay', 'on', false) AS relay;
+ relay 
+-------
+ on
+(1 row)
+
+SELECT count(*) AS total, count(*) FILTER (WHERE published_at IS NULL) AS unpublished FROM outbox;
+ total  | unpublished 
+--------+-------------
+ 150230 |           0
+(1 row)
+
+-- записи фоновой сверки о расхождениях
+SELECT count(*) AS reconciliation_issues FROM reconciliation_issues;
+ reconciliation_issues 
+-----------------------
+                     0
+(1 row)
+

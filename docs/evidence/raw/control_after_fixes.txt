@@ -1,0 +1,4 @@
+# Контрольный прогон после исправлений D14–D16 (не входит в паспорт): shop, 8 воркеров, 10 с, один прогон, тот же стенд и те же данные
+run=1 workers=8 wall=10.005s total=13123 throughput=1312/s
+  availability n=10498  ok=10498  sold_out=0    err=0   rate=1049/s mean=3.7 p50=3.0 p95=9.3 p99=14.2 max=63.6 ms
+  book         n=2625   ok=2625   sold_out=0    err=0   rate=262/s mean=15.4 p50=13.2 p95=32.3 p99=50.8 max=135.8 ms

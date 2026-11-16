@@ -1,0 +1,36 @@
+EXPLAIN запроса доступности (GET /api/availability) — самый частый запрос системы; роль данных booking_app, после всех опытов.
+Запрос выполнен дважды в одном сеансе, приведён второй вывод (каталог и страницы уже в кэше сеанса).
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual time=0.043..0.044 rows=1 loops=1)
+   Sort Key: r.price_amount, r.name
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=9
+   ->  Nested Loop (actual time=0.036..0.038 rows=1 loops=1)
+         Buffers: shared hit=9
+         ->  Bitmap Heap Scan on room_type_replica r (actual time=0.010..0.010 rows=1 loops=1)
+               Recheck Cond: (hotel_id = 'e0896894-0bd1-44a2-963c-a1ed520a4666'::uuid)
+               Filter: ((capacity >= 2) AND (status = 'active'::text))
+               Heap Blocks: exact=1
+               Buffers: shared hit=2
+               ->  Bitmap Index Scan on room_type_replica_hotel_idx (actual time=0.006..0.006 rows=1 loops=1)
+                     Index Cond: (hotel_id = 'e0896894-0bd1-44a2-963c-a1ed520a4666'::uuid)
+                     Buffers: shared hit=1
+         ->  Index Scan using hotel_replica_pkey on hotel_replica h (actual time=0.003..0.003 rows=1 loops=1)
+               Index Cond: (hotel_id = 'e0896894-0bd1-44a2-963c-a1ed520a4666'::uuid)
+               Filter: (status = 'active'::text)
+               Buffers: shared hit=2
+         SubPlan 1
+           ->  Aggregate (actual time=0.020..0.020 rows=1 loops=1)
+                 Buffers: shared hit=5
+                 ->  Bitmap Heap Scan on inventory i (actual time=0.013..0.017 rows=3 loops=1)
+                       Recheck Cond: ((room_type_id = r.room_type_id) AND (day >= (CURRENT_DATE + 30)) AND (day < (CURRENT_DATE + 33)))
+                       Heap Blocks: exact=3
+                       Buffers: shared hit=5
+                       ->  Bitmap Index Scan on inventory_pkey (actual time=0.009..0.009 rows=3 loops=1)
+                             Index Cond: ((room_type_id = r.room_type_id) AND (day >= (CURRENT_DATE + 30)) AND (day < (CURRENT_DATE + 33)))
+                             Buffers: shared hit=2
+ Planning Time: 0.202 ms
+ Execution Time: 0.081 ms
+(30 rows)
+

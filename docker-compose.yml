@@ -1,0 +1,149 @@
+# TourFlow — запуск всей системы одной командой:
+#
+#   docker compose up --build
+#
+# SPA:        http://localhost:3000
+# API:        http://localhost:8080/api  (gateway)
+# Админ:      admin@tourflow.local / Admin12345
+#
+# Секреты ниже — только для локального запуска.
+
+x-backend: &backend
+  build: ./backend
+  restart: unless-stopped
+  environment: &backend-env
+    LOG_LEVEL: info
+    KAFKA_BROKERS: kafka:9092
+    JWKS_URL: http://identity:8080/.well-known/jwks.json
+    INTERNAL_TOKEN: dev-internal-token-change-me
+    HTTP_ADDR: ":8080"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    # Только loopback: порт нужен для psql и тестов с этой машины, а не сети.
+    ports: ["127.0.0.1:5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Роли данных — при каждом запуске (файл идемпотентен): в базе, созданной
+  # до их введения, они тоже появятся.
+  dbinit:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      PGPASSWORD: postgres
+    volumes:
+      - ./deploy/postgres/roles.sql:/roles.sql:ro
+    command: ["psql", "-h", "postgres", "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-q", "-f", "/roles.sql"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  kafka:
+    image: apache/kafka:3.9.1
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  identity:
+    <<: *backend
+    command: ["/app/identity"]
+    environment:
+      <<: *backend-env
+      DATABASE_URL: postgres://identity_svc:identity_pw@postgres:5432/identity?sslmode=disable
+      APP_DATABASE_URL: postgres://identity_app:identity_app_pw@postgres:5432/identity?sslmode=disable
+      # base64 от 32 байт; сгенерировать свой: openssl rand -base64 32
+      JWT_SIGNING_SEED: "dG91cmZsb3ctZGV2LXNlZWQtMzItYnl0ZXMtbG9uZyE="
+      BOOTSTRAP_ADMIN_EMAIL: admin@tourflow.local
+      BOOTSTRAP_ADMIN_PASSWORD: Admin12345
+      BCRYPT_COST: "10"
+    depends_on:
+      dbinit: { condition: service_completed_successfully }
+
+  catalog:
+    <<: *backend
+    command: ["/app/catalog"]
+    environment:
+      <<: *backend-env
+      DATABASE_URL: postgres://catalog_svc:catalog_pw@postgres:5432/catalog?sslmode=disable
+      APP_DATABASE_URL: postgres://catalog_app:catalog_app_pw@postgres:5432/catalog?sslmode=disable
+      IDENTITY_URL: http://identity:8080
+    depends_on:
+      dbinit: { condition: service_completed_successfully }
+      kafka: { condition: service_healthy }
+
+  booking:
+    <<: *backend
+    command: ["/app/booking"]
+    environment:
+      <<: *backend-env
+      DATABASE_URL: postgres://booking_svc:booking_pw@postgres:5432/booking?sslmode=disable
+      APP_DATABASE_URL: postgres://booking_app:booking_app_pw@postgres:5432/booking?sslmode=disable
+      HOTEL_TIMEZONE: Europe/Moscow
+    depends_on:
+      dbinit: { condition: service_completed_successfully }
+      kafka: { condition: service_healthy }
+
+  notification:
+    <<: *backend
+    command: ["/app/notification"]
+    environment:
+      <<: *backend-env
+      DATABASE_URL: postgres://notification_svc:notification_pw@postgres:5432/notification?sslmode=disable
+      APP_DATABASE_URL: postgres://notification_app:notification_app_pw@postgres:5432/notification?sslmode=disable
+    depends_on:
+      dbinit: { condition: service_completed_successfully }
+      kafka: { condition: service_healthy }
+
+  gateway:
+    <<: *backend
+    command: ["/app/gateway"]
+    environment:
+      <<: *backend-env
+      IDENTITY_URL: http://identity:8080
+      CATALOG_URL: http://catalog:8080
+      BOOKING_URL: http://booking:8080
+      NOTIFICATION_URL: http://notification:8080
+      CORS_ORIGINS: http://localhost:3000
+      # X-Forwarded-For доверяем только потому, что снаружи gateway доступен
+      # лишь через nginx фронтенда (он перезаписывает заголовок адресом клиента).
+      # Прямой порт открыт только на loopback — для e2e и отладки с этой машины:
+      # иначе подменой заголовка обходился бы лимит попыток входа (T54).
+      TRUST_PROXY: "true"
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on: [identity, catalog, booking, notification]
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports: ["3000:80"]
+    depends_on: [gateway]
+
+volumes:
+  pgdata:

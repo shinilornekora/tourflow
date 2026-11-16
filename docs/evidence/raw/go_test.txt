@@ -1,0 +1,86 @@
+# go test -race -count=1 -p 1 -v ./... — 16.11.2026, роли: владелец tourflow, данные tourflow_app; Kafka localhost:9092
+--- PASS: TestServiceBoundaries (0.01s)
+--- PASS: TestServicesUseTwoRoles (0.00s)
+ok  	github.com/shinilornekora/tourflow/backend	1.015s
+    concurrency_test.go:158: механизм                                                               успехов   booked повторов     время
+    concurrency_test.go:192: 0. наивно: чтение → проверка → запись, READ COMMITTED (аномалия)            25        1        0     166ms
+    concurrency_test.go:192: 1. блокировка строки: SELECT … FOR UPDATE                                    1        1        0      11ms
+    concurrency_test.go:192: 2. оптимистично: запись, только если значение не изменилось (CAS)            1        1       24       9ms
+    concurrency_test.go:192: 3. условная атомарная запись: UPDATE … WHERE booked < total                  1        1        0       4ms
+    concurrency_test.go:192: 4. SERIALIZABLE: наивный код + повтор при 40001                              1        1       24      12ms
+--- PASS: TestConcurrencyExperiment (0.31s)
+--- PASS: TestLastRoomRace (0.27s)
+--- PASS: TestOverlappingStaysKeepInvariant (0.45s)
+--- PASS: TestIdempotency (0.15s)
+--- PASS: TestRowLevelSecurity (0.10s)
+--- PASS: TestAuditIsAppendOnly (0.10s)
+--- PASS: TestCancelReleasesRoom (0.09s)
+--- PASS: TestAvailabilityHidesSoldOutForCustomers (0.09s)
+--- PASS: TestHotelDeactivationCompensation (0.11s)
+--- PASS: TestDuplicateEventIsIgnored (0.09s)
+--- PASS: TestOutboxRelay (0.10s)
+--- PASS: TestOutboxCommittedWithReservation (0.09s)
+--- PASS: TestOutboxReplayReturnsStoredResponse (0.10s)
+--- PASS: TestOutboxConflictUnderSameKey (0.12s)
+--- PASS: TestOutboxRolledBackWithReservation (0.13s)
+--- PASS: TestOutboxIsolated (0.11s)
+--- PASS: TestRelayLease (0.12s)
+--- PASS: TestLegacyKeyBackfill (0.10s)
+--- PASS: TestReplayAfterMidnight (0.09s)
+--- PASS: TestOutboxEnvelopeBelongsToTenant (0.09s)
+--- PASS: TestOutboxForeignEventRejected (0.10s)
+--- PASS: TestOutboxRejectedCommandLeavesNothing (0.11s)
+--- PASS: TestReconcileFindsDrift (0.10s)
+--- PASS: TestNegativeTenancy (0.12s)
+    --- PASS: TestNegativeTenancy/1_чужое_не_читается (0.00s)
+    --- PASS: TestNegativeTenancy/2_чужое_не_меняется (0.00s)
+    --- PASS: TestNegativeTenancy/3_строку_за_другого_не_записать_(WITH_CHECK) (0.00s)
+    --- PASS: TestNegativeTenancy/4_аудит_не_подделать (0.00s)
+    --- PASS: TestNegativeTenancy/4а_аудит_чужого_отеля_не_дописать (0.01s)
+    --- PASS: TestNegativeTenancy/4б_служебный_контекст_—_только_владельцу (0.00s)
+    --- PASS: TestNegativeTenancy/5_без_контекста_—_ноль_строк_(fail_closed) (0.00s)
+    --- PASS: TestNegativeTenancy/6_роль_данных_не_снимает_защиту (0.00s)
+--- PASS: TestManagerScopeWithoutRLS (0.10s)
+ok  	github.com/shinilornekora/tourflow/backend/internal/booking	4.377s
+--- PASS: TestStayInvariants (0.00s)
+    --- PASS: TestStayInvariants/past_check-in (0.00s)
+    --- PASS: TestStayInvariants/out_equals_in (0.00s)
+    --- PASS: TestStayInvariants/out_before_in (0.00s)
+    --- PASS: TestStayInvariants/too_long (0.00s)
+    --- PASS: TestStayInvariants/too_far_ahead (0.00s)
+--- PASS: TestOnlyCustomerBooks (0.00s)
+--- PASS: TestCapacityAndSellable (0.00s)
+--- PASS: TestCancelRules (0.00s)
+ok  	github.com/shinilornekora/tourflow/backend/internal/booking/domain	1.011s
+--- PASS: TestHotelLifecycleAndPermissions (0.09s)
+--- PASS: TestSearchFiltersAndSort (0.11s)
+--- PASS: TestCatalogRLSNegative (0.11s)
+ok  	github.com/shinilornekora/tourflow/backend/internal/catalog	1.330s
+--- PASS: TestRoutingAuthAndIsolation (0.21s)
+--- PASS: TestBreakerOpensOnUpstream5xx (0.00s)
+--- PASS: TestLoginRateLimit (0.00s)
+--- PASS: TestLoginRateLimitIgnoresSpoofedForwardedFor (0.00s)
+ok  	github.com/shinilornekora/tourflow/backend/internal/gateway	1.229s
+--- PASS: TestRegisterLoginAndToken (0.15s)
+--- PASS: TestRefreshRotationAndReuseDetection (0.08s)
+--- PASS: TestParallelRefreshGivesOneWinner (0.12s)
+--- PASS: TestRolesAndAdmin (0.11s)
+--- PASS: TestDataRoleCannotChangeSchema (0.06s)
+ok  	github.com/shinilornekora/tourflow/backend/internal/identity	1.534s
+--- PASS: TestRedeliveryCreatesOneNotification (0.07s)
+--- PASS: TestStaleEventIsNotDelivered (0.07s)
+--- PASS: TestBrokenEventIsPermanent (0.05s)
+--- PASS: TestNotificationsIsolatedByRLS (0.06s)
+ok  	github.com/shinilornekora/tourflow/backend/internal/notification	1.271s
+--- PASS: TestIsPermanent (0.00s)
+--- PASS: TestPoisonPillGoesToDLQ (24.04s)
+--- PASS: TestTransientErrorIsRetriedNotDropped (13.15s)
+--- PASS: TestDLQOutageDoesNotLoseEvent (12.78s)
+--- PASS: TestDataErrorGoesToDLQ (12.02s)
+--- PASS: TestCrashAfterCommitIsRedeliveredAndDeduplicated (7.27s)
+--- PASS: TestEnvelopeContract (0.00s)
+--- PASS: TestContractEvolutionAndQuarantine (12.10s)
+ok  	github.com/shinilornekora/tourflow/backend/internal/platform/messaging	82.383s
+--- PASS: TestBreakerStateMachine (0.00s)
+--- PASS: TestTokenBucket (0.00s)
+ok  	github.com/shinilornekora/tourflow/backend/internal/platform/resilience	1.012s

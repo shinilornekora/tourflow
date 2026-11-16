@@ -1,0 +1,10 @@
+# loadgen mix=shop workers=8 requests=2000 duration=30s runs=3 hotels=20 customers=200 go=go1.24.7 cpu=2 date=2026-11-16T05:44:11Z
+run=1 workers=8 wall=30.01s total=42981 throughput=1432/s
+  availability n=34384  ok=34384  sold_out=0    err=0   rate=1146/s mean=3.5 p50=2.7 p95=8.4 p99=13.4 max=143.0 ms
+  book         n=8597   ok=8597   sold_out=0    err=0   rate=286/s mean=13.8 p50=11.5 p95=27.9 p99=50.2 max=265.4 ms
+run=2 workers=8 wall=30.007s total=45297 throughput=1510/s
+  availability n=36237  ok=36237  sold_out=0    err=0   rate=1208/s mean=3.3 p50=2.5 p95=7.9 p99=12.0 max=93.3 ms
+  book         n=9060   ok=9060   sold_out=0    err=0   rate=302/s mean=13.3 p50=11.0 p95=26.1 p99=44.6 max=236.1 ms
+run=3 workers=8 wall=30.007s total=43610 throughput=1453/s
+  availability n=34888  ok=34888  sold_out=0    err=0   rate=1163/s mean=3.5 p50=2.7 p95=8.3 p99=13.2 max=207.8 ms
+  book         n=8722   ok=8722   sold_out=0    err=0   rate=291/s mean=13.5 p50=11.7 p95=26.5 p99=40.6 max=167.5 ms
