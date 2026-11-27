@@ -1,6 +1,6 @@
 # TourFlow — запуск всей системы одной командой:
 #
-#   docker compose up --build
+#   docker compose up --build        (macOS / Windows / Linux, Docker Desktop)
 #
 # SPA:        http://localhost:3000
 # API:        http://localhost:8080/api  (gateway)
@@ -28,7 +28,9 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     # Только loopback: порт нужен для psql и тестов с этой машины, а не сети.
-    ports: ["127.0.0.1:5432:5432"]
+    # Только loopback и нестандартный порт: локальный PostgreSQL (Postgres.app,
+    # Homebrew) на 5432 не помешает запуску.
+    ports: ["127.0.0.1:${POSTGRES_PORT:-15432}:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
       interval: 3s
@@ -57,7 +59,7 @@ services:
     volumes:
       - pgquerydata:/var/lib/postgresql/data
       - ./deploy/postgres-query/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    ports: ["127.0.0.1:5433:5432"]
+    ports: ["127.0.0.1:${POSTGRES_QUERY_PORT:-15433}:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
       interval: 3s
@@ -168,13 +170,27 @@ services:
       # Прямой порт открыт только на loopback — для e2e и отладки с этой машины:
       # иначе подменой заголовка обходился бы лимит попыток входа (T54).
       TRUST_PROXY: "true"
-    ports: ["127.0.0.1:8080:8080"]
+    ports: ["127.0.0.1:${GATEWAY_PORT:-8080}:8080"]
     depends_on: [identity, catalog, booking, booking-query, notification]
 
+  # Демо-данные: 7 отелей, менеджер и клиент. Ждёт gateway, повторный запуск
+  # ничего не дублирует.
+  seed:
+    image: alpine:3.20
+    restart: "no"
+    volumes:
+      - ./scripts/seed.sh:/seed.sh:ro
+    entrypoint: ["sh", "-c", "apk add --no-cache -q bash curl jq && bash /seed.sh http://gateway:8080"]
+    depends_on: [gateway]
+
+  # SPA (React + Effector) из отдельного репозитория tourflow-front, собирается
+  # прямо из GitHub. Для локальной копии: FRONTEND_CONTEXT=../tourflow-front.
   frontend:
-    build: ./frontend
+    build: ${FRONTEND_CONTEXT:-https://github.com/shinilornekora/tourflow-front.git#main}
     restart: unless-stopped
-    ports: ["3000:80"]
+    environment:
+      API_UPSTREAM: http://gateway:8080
+    ports: ["${APP_PORT:-3000}:80"]
     depends_on: [gateway]
 
 volumes:

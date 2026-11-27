@@ -6,8 +6,22 @@ set -uo pipefail
 API="${1:-http://localhost:8080}/api"
 j() { curl -s -X "$1" "$API$2" -H 'Content-Type: application/json' ${3:+-H "Authorization: Bearer $3"} ${4:+-d "$4"}; }
 
+# Ждём, пока поднимутся gateway и identity (до 3 минут: в docker compose
+# сид стартует вместе с системой).
+# Проверяем GET-запросами: попытки входа ограничены лимитом (5 в минуту).
+code() { curl -s -o /dev/null -w '%{http_code}' "$API$1"; }
+for _ in $(seq 1 90); do
+  [[ $(code /users/me) == 401 && $(code /cities) == 200 ]] && break
+  sleep 2
+done
 ADMIN=$(j POST /auth/login "" '{"email":"admin@tourflow.local","password":"Admin12345"}' | jq -r .access_token)
 [[ $ADMIN == null || -z $ADMIN ]] && { echo "admin login failed — система запущена?"; exit 1; }
+
+# Отели уже есть — сид выполнялся раньше, повторно не создаём.
+if [[ $(j GET "/hotels?include_inactive=true&page_size=1" "$ADMIN" | jq -r .total) != 0 ]]; then
+  echo "Демо-данные уже загружены."
+  exit 0
+fi
 
 j POST /auth/register "" '{"email":"manager@tourflow.local","password":"Manager123","full_name":"Мария Соколова","phone":"+7 900 111-22-33"}' >/dev/null
 j POST /auth/register "" '{"email":"client@tourflow.local","password":"Client123","full_name":"Иван Петров","phone":"+7 900 444-55-66"}' >/dev/null

@@ -11,28 +11,36 @@ SPA (Клеблеева Е. Р.).
 - **[docs/LOAD.md](docs/LOAD.md)** — паспорт нагрузки (РХД ПР-1): p50/p95/p99, три повтора по 20–30 с, инварианты, все 18 прогонов; сырые выводы — `docs/evidence/raw/`.
 - **[docs/TENANCY.md](docs/TENANCY.md)** — модель размещения, RLS, два уровня принуждения, отрицательные тесты (РХД ПР-2).
 
-## Запуск (Windows, Docker Desktop)
+## Запуск одной командой (macOS, Windows, Linux — Docker Desktop)
 
-```powershell
+Нужен только Docker Desktop (на Mac подходят и Apple Silicon, и Intel: все образы мультиархитектурные).
+
+```bash
+git clone https://github.com/shinilornekora/tourflow.git
 cd tourflow
 docker compose up --build
 ```
 
-Первая сборка — 3–5 минут. Затем:
+Первая сборка занимает 3–5 минут. Поднимаются 11 контейнеров: два PostgreSQL (основной и отдельный для модели чтения), Kafka, шесть Go-сервисов, SPA и одноразовый `seed` с демо-данными. Фронтенд собирается прямо из репозитория [tourflow-front](https://github.com/shinilornekora/tourflow-front) (React + Effector, webpack → nginx).
 
 | Что | Адрес |
 |---|---|
 | Приложение | http://localhost:3000 |
 | API (gateway) | http://localhost:8080/api |
-| Администратор | `admin@tourflow.local` / `Admin12345` |
 
-Демо-данные (8 отелей в 4 городах, менеджер и клиент) заливаются скриптом. В Git Bash или WSL нужен `jq`:
+Демо-входы (сид выполняется автоматически при первом запуске, повторный запуск ничего не дублирует):
 
-```bash
-./scripts/seed.sh
-```
+| Роль | Email | Пароль |
+|---|---|---|
+| Администратор | `admin@tourflow.local` | `Admin12345` |
+| Менеджер отелей «Казанские купола» и «Невский берег» | `manager@tourflow.local` | `Manager123` |
+| Клиент | `client@tourflow.local` | `Client123` |
 
-После сида: `manager@tourflow.local / Manager123`, `client@tourflow.local / Client123`.
+Остановить: `Ctrl+C` или `docker compose down`. Стереть данные и начать с нуля: `docker compose down -v`.
+
+Если порт занят, его можно сменить переменной: `APP_PORT=3001 GATEWAY_PORT=8081 docker compose up --build`. PostgreSQL наружу открыт только на loopback и на портах 15432 и 15433, чтобы не конфликтовать с локальной установкой. Чтобы собрать фронтенд из локальной копии вместо GitHub: `FRONTEND_CONTEXT=../tourflow-front docker compose up --build`.
+
+Папка `frontend/` в этом репозитории — прежний SPA (React + RTK Query), в docker compose он больше не используется.
 
 Сквозная проверка всей системы (45 проверок по всем ролям, в том числе 10 параллельных броней одного номера; нужна запущенная система):
 
@@ -73,13 +81,13 @@ cd backend
 go test ./...                       # юнит-тесты и архитектурный тест
 # интеграционные — на настоящем PostgreSQL. Две роли, обе НЕ суперпользователи
 # (суперпользователь обходит RLS): владелец таблиц и роль данных, как в бою.
-export TEST_PG_DSN="postgres://tourflow:tourflow@localhost:5432/%s?sslmode=disable"
-export TEST_PG_APP_DSN="postgres://tourflow_app:tourflow_app@localhost:5432/%s?sslmode=disable"
+export TEST_PG_DSN="postgres://tourflow:tourflow@localhost:15432/%s?sslmode=disable"
+export TEST_PG_APP_DSN="postgres://tourflow_app:tourflow_app@localhost:15432/%s?sslmode=disable"
 export TEST_KAFKA_BROKERS=localhost:9092      # тесты потребителя на настоящей Kafka
 go test -race -p 1 ./...
 ```
 
-Интеграционным тестам нужны базы `identity_test`, `catalog_test`, `booking_test` и `notification_test`; владелец — роль `tourflow`, роли `tourflow_app` выдан `CONNECT`. Без `TEST_PG_APP_DSN` тесты идут под одной ролью, а проверки «роль данных не может снять защиту» пропускаются.
+Интеграционным тестам нужны базы `identity_test`, `catalog_test`, `booking_test`, `notification_test` и `bookingquery_test`; владелец — роль `tourflow`, роли `tourflow_app` выдан `CONNECT`. Без `TEST_PG_APP_DSN` тесты идут под одной ролью, а проверки «роль данных не может снять защиту» пропускаются.
 
 Что проверяют тесты (57 тестов; полная таблица — в конце `docs/ARCHITECTURE.md`):
 - гонку за последний номер (25 параллельных броней → 1 успех) и эксперимент ПР-3: аномалия на наивном коде и четыре механизма защиты;
