@@ -31,17 +31,20 @@ flowchart LR
     NG --> GW[gateway<br/>маршруты, JWT, rate limit,<br/>circuit breaker]
     GW --> ID[identity<br/>пользователи, роли, токены]
     GW --> CT[catalog<br/>отели, категории, менеджеры]
-    GW --> BK[booking<br/>остатки, брони, аудит]
+    GW -- "POST /reservations" --> BK[booking<br/>команды, остатки, аудит]
+    GW -- "GET /reservations*" --> BQ[booking-query<br/>карточки, списки, сводки]
     GW --> NT[notification<br/>уведомления]
     CT -. "GET /internal/users/{id}<br/>(единственный sync-вызов)" .-> ID
     ID --- DBI[(identity db)]
     CT --- DBC[(catalog db)]
     BK --- DBB[(booking db)]
     NT --- DBN[(notification db)]
+    BQ --- DBQ[(отдельный PostgreSQL<br/>модель чтения)]
     CT -- "outbox → catalog.hotel.v1<br/>catalog.room_type.v1" --> K{{Kafka}}
     K -- "реплика каталога" --> BK
     BK -- "outbox → booking.reservation.v1" --> K
     K --> NT
+    K -- "брони + назначения менеджеров" --> BQ
 ```
 
 | Сервис | Порт | Владеет данными | Публикует | Потребляет |
@@ -50,7 +53,20 @@ flowchart LR
 | identity | 8081 | users, refresh_tokens | — | — |
 | catalog | 8082 | hotels, hotel_managers, room_types | HotelUpserted, RoomTypeUpserted | — |
 | booking | 8083 | inventory, reservations, idempotency_keys, audit_log | ReservationConfirmed, ReservationCancelled | события каталога |
-| notification | 8084 | notifications | — | события брони |
+| notification | 8084 | notifications, reservation_versions | — | события брони |
+| booking-query | 8085 | reservations_cards, hotel_managers, hotel_versions, projection_inbox — **отдельный экземпляр PostgreSQL** | — | события брони, `HotelUpserted` (менеджеры) |
+
+API для фронтенда со всеми маршрутами, ролями и типами описан в [API.md](API.md).
+
+### Модель чтения броней (CQRS)
+
+Запись и чтение броней разделены:
+
+- **booking** принимает команды (`POST /api/reservations`, `POST /api/reservations/{id}/cancel`) и остаётся владельцем факта: остатки, брони, идемпотентность, аудит. Доступность (`GET /api/availability`) и аудит (`GET /api/audit`) тоже остаются в booking: доступность обязана быть точной в момент брони, а аудит — след записи.
+- **booking-query** отдаёт экранам карточки, списки и сводки (`GET /api/reservations*`). Данные приходят только событиями `booking.reservation.v1` и `catalog.hotel.v1`: проектор пишет в базу под владельцем, API читает под ролью данных, у которой нет прав на запись (`bookingquery/migrations.Deny`). RLS повторяет модель доступа booking: клиент видит свои брони, менеджер — брони своих отелей, администратор — все.
+- Gateway разводит их **по методу**: префикс `/api/reservations` один и тот же, GET уходит в booking-query, остальные методы — в booking. Переменная окружения `BOOKING_READS=booking` возвращает чтение в booking, если проекция отстала или сломалась.
+
+Цена решения — согласованность «в конечном счёте»: карточка появляется в модели чтения через время доставки события, обычно через сотни миллисекунд. SPA берёт результат команды из её ответа (см. API.md, «Согласованность чтения броней»). Проекция идемпотентна (`projection_inbox`) и применяет только более новую версию агрегата. Новый экземпляр проекции восстанавливается переигровкой топиков: группа потребителей читает их с начала. Чтобы карточку можно было собрать из одного события, booking добавил в событие брони поля `status`, `created_at`, `cancelled_at`. Это совместимое изменение: существующие потребители лишние поля игнорируют.
 
 ## Ключевые потоки
 
@@ -179,11 +195,11 @@ internal/platform/       общая инфраструктура: http, auth, pg
 
 | Что | Где | Сколько |
 |---|---|---|
-| Интеграционные тесты на настоящем PostgreSQL: миграции под владельцем, код — под ролью данных (`TEST_PG_APP_DSN`) | `internal/{identity,catalog,booking,notification}` | identity 5, catalog 3, booking 25, notification 4 — всего 37 |
+| Интеграционные тесты на настоящем PostgreSQL: миграции под владельцем, код — под ролью данных (`TEST_PG_APP_DSN`) | `internal/{identity,catalog,booking,notification,bookingquery}` | identity 5, catalog 3, booking 25, notification 4, booking-query 4 — всего 41 |
 | Потребитель на настоящей Kafka (`TEST_KAFKA_BROKERS`) | `internal/platform/messaging` | 6 |
-| Модульные тесты без базы | `booking/domain`, `gateway`, `platform/resilience`, `platform/messaging` (классификация ошибок, контракт конверта) | 4 + 4 + 2 + 2 = 12 |
+| Модульные тесты без базы | `booking/domain`, `gateway` (в том числе разведение чтения и команд по методу), `platform/resilience`, `platform/messaging` (классификация ошибок, контракт конверта), `bookingquery/app` (событие → карточка, нарушение контракта → DLQ) | 4 + 5 + 2 + 2 + 4 = 17 |
 | Архитектура: сервисы не импортируют друг друга; каждый сервис с базой открывает два пула | `backend/arch_test.go` | 2 |
-| Сквозной сценарий через gateway | `scripts/e2e.sh` | 42 проверки, в том числе 10 параллельных броней одного номера |
+| Сквозной сценарий через gateway | `scripts/e2e.sh` | 45 проверок, в том числе 10 параллельных броней одного номера и чтение из booking-query |
 | Нагрузка | `backend/tools/loadgen`, результат — `docs/LOAD.md` | 2 сценария, 18 опытов |
 
 Подробно про каждое решение и его цену — в [TRADEOFFS.md](TRADEOFFS.md).

@@ -56,6 +56,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// Модель чтения броней (CQRS): GET /api/reservations* — в booking-query,
+	// команды — в booking. BOOKING_READS=booking возвращает чтение в booking
+	// (откат, если проекция отстала или сломалась).
+	bookingQuery, err := upstream("booking-query", "BOOKING_QUERY_URL", "http://localhost:8085", 3*time.Second, "/api/reservations")
+	if err != nil {
+		return err
+	}
+	bookingQuery.Methods = []string{http.MethodGet, http.MethodHead}
 	notification, err := upstream("notification", "NOTIFICATION_URL", "http://localhost:8084", 3*time.Second, "/api/notifications")
 	if err != nil {
 		return err
@@ -73,10 +81,15 @@ func run() error {
 		return err
 	}
 
+	upstreams := []*gateway.Upstream{identity, catalog, booking, notification}
+	if config.String("BOOKING_READS", "query") != "booking" {
+		upstreams = append(upstreams, bookingQuery)
+	}
+
 	g := &gateway.Gateway{
 		Log:         base.Log,
 		Verifier:    base.Verifier,
-		Upstreams:   []*gateway.Upstream{identity, catalog, booking, notification},
+		Upstreams:   upstreams,
 		AllowOrigin: config.List("CORS_ORIGINS", []string{"http://localhost:3000"}),
 		GlobalLimit: resilience.NewTokenBucket(float64(rps), float64(burst)),
 		AuthLimit:   resilience.NewTokenBucket(5.0/60.0, 10), // 5 в минуту, всплеск до 10

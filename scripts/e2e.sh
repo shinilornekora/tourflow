@@ -15,6 +15,9 @@ req()  { # METHOD PATH TOKEN [BODY] [extra curl args...]
     -H 'Content-Type: application/json' ${t:+-H "Authorization: Bearer $t"} ${b:+-d "$b"} "$@"
 }
 body() { cat /tmp/e2e.body; }
+# eventually N CMD... — повторяет проверку до 20 с: чтение броней идёт из
+# модели чтения (booking-query), она догоняет команду через Kafka.
+eventually() { for _ in $(seq 1 40); do "$@" && return 0; sleep 0.5; done; return 1; }
 expect() { [[ "$1" == "$2" ]] && ok "$3" || { echo; body; echo; fail "$3: HTTP $1, ждали $2"; }; }
 day() { date -u -d "+$1 day" +%F; }
 login() { req POST /auth/login "" "{\"email\":\"$1\",\"password\":\"$2\"}" >/dev/null; body | jq -r .access_token; }
@@ -68,10 +71,15 @@ req GET "/availability?hotel_id=$HOTEL&check_in=$IN&check_out=$OUT" "" "" >/dev/
 
 echo "== Изоляция данных"
 expect "$(req GET /reservations/$RES "$BOB" "")" 404 "Борис не видит бронь Алисы"
-expect "$(req GET "/reservations?hotel_id=$HOTEL" "$MGR" "")" 200 "менеджер видит брони своего отеля"
-[[ $(body | jq .total) == 1 ]] && ok "у менеджера ровно 1 бронь" || fail "список менеджера"
-expect "$(req GET /reservations/my "$ALICE" "")" 200 "«корзина» Алисы"
-[[ $(body | jq .total) == 1 ]] && ok "в корзине 1 бронь" || fail "корзина"
+mgr_total() { [[ $(req GET "/reservations?hotel_id=$HOTEL$1" "$MGR" "") == 200 && $(body | jq .total) == "$2" ]]; }
+eventually mgr_total "" 1 && ok "менеджер видит ровно 1 бронь своего отеля (модель чтения)" || fail "список менеджера"
+my_total() { [[ $(req GET /reservations/my "$ALICE" "") == 200 && $(body | jq .total) == 1 ]]; }
+eventually my_total && ok "«корзина» Алисы: 1 бронь" || fail "корзина"
+eventually eval '[[ $(req GET /reservations/$RES "$ALICE" "") == 200 ]]' && [[ $(body | jq -r .status) == confirmed && $(body | jq .nights) == 2 ]] \
+  && ok "карточка брони в booking-query" || fail "карточка брони"
+expect "$(req GET /reservations/my/summary "$ALICE" "")" 200 "сводка личного кабинета"
+[[ $(body | jq .upcoming) == 1 && $(body | jq .total_spent.amount) == 900000 ]] && ok "в сводке 1 предстоящая бронь на 9000,00 ₽" || fail "сводка клиента: $(body)"
+expect "$(req GET /reservations/my/summary "$MGR" "")" 403 "у менеджера нет личного кабинета клиента"
 
 echo "== Гонка за последний номер: 10 одновременных запросов"
 RIN=$(day 20); ROUT=$(day 22)
@@ -85,8 +93,9 @@ export -f race; export API ALICE BOB RUN RBOOK
 codes=$(seq 1 10 | xargs -P 10 -I{} bash -c 'race {}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')
 [[ $(grep -o ' 1 201' <<<" $codes" | wc -l) == 1 && $(grep -o '9 409' <<<"$codes" | wc -l) == 1 ]] \
   && ok "из 10 параллельных броней одного номера прошла ровно одна (201), девять получили 409" || fail "гонка: $codes"
-expect "$(req GET "/reservations?hotel_id=$HOTEL&status=confirmed" "$MGR" "")" 200 "менеджер перечитывает брони"
-[[ $(body | jq .total) == 2 ]] && ok "после гонки у отеля 2 подтверждённые брони, не больше" || fail "овербукинг: $(body | jq .total)"
+eventually mgr_total "&status=confirmed" 2 && ok "после гонки у отеля 2 подтверждённые брони, не больше" || fail "овербукинг: $(body | jq .total)"
+expect "$(req GET "/reservations/summary?hotel_id=$HOTEL" "$MGR" "")" 200 "сводка менеджера по отелю"
+[[ $(body | jq .confirmed) == 2 ]] && ok "в сводке 2 подтверждённые брони" || fail "сводка менеджера: $(body)"
 
 echo "== Уведомления (booking → Kafka → notification)"
 for i in $(seq 1 40); do req GET /notifications/unread-count "$ALICE" "" >/dev/null; [[ $(body | jq .unread) -ge 1 ]] && break; sleep 0.5; done

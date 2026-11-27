@@ -35,9 +35,13 @@ type Upstream struct {
 	Name     string
 	URL      *url.URL
 	Prefixes []string
-	Timeout  time.Duration
-	Breaker  *resilience.Breaker
-	proxy    *httputil.ReverseProxy
+	// Methods — если задан, upstream обслуживает только эти методы. Так
+	// чтение и команды одного ресурса расходятся по разным сервисам (CQRS):
+	// GET /api/reservations — в booking-query, POST — в booking.
+	Methods []string
+	Timeout time.Duration
+	Breaker *resilience.Breaker
+	proxy   *httputil.ReverseProxy
 }
 
 type Gateway struct {
@@ -103,13 +107,37 @@ func (g *Gateway) Init() {
 	}
 }
 
-func (g *Gateway) route(path string) *Upstream {
+func (u *Upstream) serves(method string) bool {
+	if len(u.Methods) == 0 {
+		return true
+	}
+	for _, m := range u.Methods {
+		if m == method {
+			return true
+		}
+	}
+	return false
+}
+
+// route выбирает upstream с самым длинным подходящим префиксом; при равной
+// длине побеждает upstream, явно объявивший метод.
+func (g *Gateway) route(method, path string) *Upstream {
 	var best *Upstream
-	bestLen := -1
+	bestScore := -1
 	for _, u := range g.Upstreams {
+		if !u.serves(method) {
+			continue
+		}
 		for _, p := range u.Prefixes {
-			if (path == p || strings.HasPrefix(path, p+"/") || strings.HasPrefix(path, p+"?")) && len(p) > bestLen {
-				best, bestLen = u, len(p)
+			if !(path == p || strings.HasPrefix(path, p+"/") || strings.HasPrefix(path, p+"?")) {
+				continue
+			}
+			score := len(p) * 2
+			if len(u.Methods) > 0 {
+				score++
+			}
+			if score > bestScore {
+				best, bestScore = u, score
 			}
 		}
 	}
@@ -152,7 +180,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	up := g.route(r.URL.Path)
+	up := g.route(r.Method, r.URL.Path)
 	if up == nil {
 		httpx.Error(w, r, g.Log, apperr.NotFound("Маршрут"))
 		return
