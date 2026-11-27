@@ -5,6 +5,7 @@
 SPA (Клеблеева Е. Р.).
 
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — сервисы, потоки, связь с лабораторными.
+- **[docs/API.md](docs/API.md)** — API gateway для фронтенда: маршруты, роли, ошибки, типы TypeScript.
 - **[docs/OVERVIEW.md](docs/OVERVIEW.md)** — путеводитель: путь одной брони, четыре обещания системы и чем за них заплачено, со схемами.
 - **[docs/TRADEOFFS.md](docs/TRADEOFFS.md)** — 121 запись: 110 решений с альтернативой и ценой и 11 осознанных пробелов; журнал дефектов (D1–D16), указатель тем к защите.
 - **[docs/LOAD.md](docs/LOAD.md)** — паспорт нагрузки (РХД ПР-1): p50/p95/p99, три повтора по 20–30 с, инварианты, все 18 прогонов; сырые выводы — `docs/evidence/raw/`.
@@ -33,7 +34,7 @@ docker compose up --build
 
 После сида: `manager@tourflow.local / Manager123`, `client@tourflow.local / Client123`.
 
-Сквозная проверка всей системы (42 проверки по всем ролям, в том числе 10 параллельных броней одного номера; нужна запущенная система):
+Сквозная проверка всей системы (45 проверок по всем ролям, в том числе 10 параллельных броней одного номера; нужна запущенная система):
 
 ```bash
 ./scripts/e2e.sh
@@ -44,14 +45,14 @@ docker compose up --build
 Нужны Go 1.24+, Node 22+, PostgreSQL 16 и Kafka. Kafka проще всего поднять контейнером:
 
 ```bash
-docker compose up -d postgres kafka
+docker compose up -d postgres postgres-query kafka
 ```
 
 Бэкенд — каждый сервис отдельным процессом. Переменные окружения смотрите в `docker-compose.yml`.
 
 ```bash
 cd backend
-go run ./cmd/identity     # и так для catalog, booking, notification, gateway
+go run ./cmd/identity     # и так для catalog, booking, booking-query, notification, gateway
 ```
 
 Фронтенд с hot reload (проксирует `/api` на `localhost:8080`):

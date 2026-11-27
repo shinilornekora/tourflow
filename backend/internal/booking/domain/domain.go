@@ -258,6 +258,11 @@ type ReservationEvent struct {
 	Total         Money     `json:"total"`
 	Reason        string    `json:"reason,omitempty"`
 	CancelledBy   string    `json:"cancelled_by_role,omitempty"`
+	// Поля ниже добавлены для проекции booking-query (снимок агрегата
+	// целиком, T10). Изменение совместимое: старые потребители их не читают.
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CancelledAt *time.Time `json:"cancelled_at,omitempty"`
 }
 
 func (r Reservation) Event(cancelledByRole auth.Role) ReservationEvent {
@@ -265,6 +270,7 @@ func (r Reservation) Event(cancelledByRole auth.Role) ReservationEvent {
 		ReservationID: r.ID, HotelID: r.HotelID, HotelName: r.HotelName, RoomTypeID: r.RoomTypeID,
 		RoomTypeName: r.RoomTypeName, CustomerID: r.CustomerID, CheckIn: r.Stay.CheckIn.String(),
 		CheckOut: r.Stay.CheckOut.String(), Guests: r.Guests, Total: r.Total,
+		Status: string(r.Status), CreatedAt: r.CreatedAt, CancelledAt: r.CancelledAt,
 	}
 	if r.Status == Cancelled {
 		ev.Reason = r.CancelReason

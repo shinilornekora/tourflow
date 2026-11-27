@@ -17,7 +17,7 @@ import (
 // доменная модель у каждого сервиса своя.
 func TestServiceBoundaries(t *testing.T) {
 	const mod = "github.com/shinilornekora/tourflow/backend/internal/"
-	services := []string{"identity", "catalog", "booking", "notification", "gateway"}
+	services := []string{"identity", "catalog", "booking", "bookingquery", "notification", "gateway"}
 	err := filepath.WalkDir("internal", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
 			return err
@@ -88,7 +88,7 @@ func TestServicesUseTwoRoles(t *testing.T) {
 			t.Errorf("%s connects with a single role via pg.Connect", path)
 		}
 	}
-	if withDB != 4 {
-		t.Errorf("expected 4 services with a database, found %d", withDB)
+	if withDB != 5 {
+		t.Errorf("expected 5 services with a database, found %d", withDB)
 	}
 }

@@ -164,3 +164,48 @@ func TestLoginRateLimitIgnoresSpoofedForwardedFor(t *testing.T) {
 		}
 	}
 }
+
+// CQRS: чтение броней уходит в booking-query, команды — в booking. Префикс
+// один и тот же, различает их метод.
+func TestReadsAndCommandsSplitByMethod(t *testing.T) {
+	hit := func(name string, got *atomic.Value) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got.Store(name + " " + r.Method + " " + r.URL.Path)
+			w.WriteHeader(http.StatusOK)
+		})
+	}
+	var got atomic.Value
+	bs, qs := httptest.NewServer(hit("booking", &got)), httptest.NewServer(hit("query", &got))
+	t.Cleanup(bs.Close)
+	t.Cleanup(qs.Close)
+	bu, _ := url.Parse(bs.URL)
+	qu, _ := url.Parse(qs.URL)
+	g := &Gateway{
+		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Verifier: auth.NewVerifier(auth.StaticKeys(nil)),
+		Upstreams: []*Upstream{
+			{Name: "booking", URL: bu, Prefixes: []string{"/api/reservations", "/api/availability"}, Timeout: time.Second},
+			{Name: "booking-query", URL: qu, Prefixes: []string{"/api/reservations"}, Methods: []string{http.MethodGet, http.MethodHead}, Timeout: time.Second},
+		},
+	}
+	g.Init()
+	id := uuid.NewString()
+	cases := []struct{ method, path, want string }{
+		{http.MethodGet, "/api/reservations/my", "query GET /api/reservations/my"},
+		{http.MethodGet, "/api/reservations/" + id, "query GET /api/reservations/" + id},
+		{http.MethodGet, "/api/reservations/summary", "query GET /api/reservations/summary"},
+		{http.MethodPost, "/api/reservations", "booking POST /api/reservations"},
+		{http.MethodPost, "/api/reservations/" + id + "/cancel", "booking POST /api/reservations/" + id + "/cancel"},
+		// Доступность и аудит остаются в booking, даже на GET.
+		{http.MethodGet, "/api/availability", "booking GET /api/availability"},
+	}
+	for _, c := range cases {
+		got.Store("")
+		if w := do(g, c.method, c.path, ""); w.Code != http.StatusOK {
+			t.Fatalf("%s %s: HTTP %d", c.method, c.path, w.Code)
+		}
+		if got.Load() != c.want {
+			t.Errorf("%s %s routed to %q, want %q", c.method, c.path, got.Load(), c.want)
+		}
+	}
+}
